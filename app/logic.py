@@ -8,7 +8,6 @@ def run_metabolic_model(input_data: dict):
 
     df = pd.DataFrame([input_data])
 
-    # Example logic (replace with your real one)
     score = df.mean(axis=1).iloc[0]
 
     return {
