@@ -1,7 +1,15 @@
 from contextlib import asynccontextmanager
+from io import BytesIO
+
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend, safe for servers
+import matplotlib.pyplot as plt
+import numpy as np
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from app.logic import init_community, run_metabolic_model
+from app.logic import init_community, run_metabolic_model, METABOLITES
 
 
 # ── Startup / shutdown ────────────────────────────────────────────────────────
@@ -81,3 +89,59 @@ def run_all_conditions():
         except Exception as e:
             results.append({"label": c["label"], "error": str(e)})
     return {"conditions": results}
+
+
+@app.post("/plot")
+def plot_conditions():
+    """Run all four conditions and return a bar chart as a PNG image."""
+    conditions = [
+        {"label": "Baseline",            "low_mucin": False, "low_b12": False},
+        {"label": "Low B12",             "low_mucin": False, "low_b12": True},
+        {"label": "Low mucin",           "low_mucin": True,  "low_b12": False},
+        {"label": "Low mucin + Low B12", "low_mucin": True,  "low_b12": True},
+    ]
+
+    results = []
+    for c in conditions:
+        try:
+            r = run_metabolic_model(low_mucin=c["low_mucin"], low_b12=c["low_b12"])
+            r["label"] = c["label"]
+            results.append(r)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error running {c['label']}: {str(e)}")
+
+    # ── Build plot ────────────────────────────────────────────────────────────
+    metabolite_names = list(METABOLITES.values())   # ["Acetate", "Butyrate", ...]
+    condition_labels = [r["label"] for r in results]
+    n_conditions     = len(results)
+    n_metabolites    = len(metabolite_names)
+
+    data = np.array([
+        [r["net_community_flux"].get(name, 0) for name in metabolite_names]
+        for r in results
+    ])
+
+    x      = np.arange(n_conditions)
+    width  = 0.18
+    colors = ["#378ADD", "#1D9E75", "#BA7517", "#D4537E"]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for i, (name, color) in enumerate(zip(metabolite_names, colors)):
+        offset = (i - n_metabolites / 2 + 0.5) * width
+        ax.bar(x + offset, data[:, i], width, label=name, color=color)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(condition_labels, rotation=15, ha="right")
+    ax.set_ylabel("Net flux (mmol/gDW/h)")
+    ax.set_title("Net community SCFA flux by condition")
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+    ax.legend()
+    fig.tight_layout()
+
+    # ── Return as PNG ─────────────────────────────────────────────────────────
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+
+    return StreamingResponse(buf, media_type="image/png")
