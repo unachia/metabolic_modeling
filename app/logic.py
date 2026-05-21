@@ -1,39 +1,39 @@
-from typing import Optional
 import pandas as pd
 from micom import Community
 
 # ── AGORA model paths ──────────────────────────────────────────────────────────
 AGORA_MODELS = {
     "A_muciniphila": "agora_files/Akkermansia_muciniphila_ATCC_BAA_835.xml",
-    "F_prausnitzii": "agora_files/Faecalibacterium_prausnitzii_A2_165.xml",
-    "A_caccae":      "agora_files/Anaerostipes_caccae_DSM_14662.xml",
-    "E_hallii":      "agora_files/Eubacterium_hallii_DSM_3353.xml",
+    "F_prausnitzii":  "agora_files/Faecalibacterium_prausnitzii_A2_165.xml",
+    "A_caccae":       "agora_files/Anaerostipes_caccae_DSM_14662.xml",
+    "E_hallii":       "agora_files/Eubacterium_hallii_DSM_3353.xml",
 }
 
-VALID_SPECIES = frozenset(AGORA_MODELS.keys())
-
 DEFAULT_ABUNDANCES = {
-    "A_muciniphila": 0.3,
-    "F_prausnitzii": 0.25,
-    "A_caccae":      0.25,
-    "E_hallii":      0.2,
+    "A_muciniphila": 0.30,
+    "F_prausnitzii":  0.25,
+    "A_caccae":       0.25,
+    "E_hallii":       0.20,
+}
+
+METABOLITES = {
+    "EX_ac_m":      "Acetate",
+    "EX_but_m":     "Butyrate",
+    "EX_ppa_m":     "Propionate",
+    "EX_12ppd_S_m": "1,2-Propanediol",
 }
 
 MUCIN_PROXIES = ["EX_acgal_m", "EX_acgam_m", "EX_fuc_L_m", "EX_gal_m", "EX_man_m"]
 B12_KEYWORDS  = ["b12", "cobal", "cbl", "vitb", "cobalamin", "cobalt"]
+TRADEOFF      = 0.3
 
-EX_ACETATE     = "EX_ac_m"
-EX_BUTYRATE    = "EX_but_m"
-EX_PROPIONATE  = "EX_ppa_m"
-EX_PROPANEDIOL = "EX_12ppd_S_m"
-
-# ── Global state (populated at startup via lifespan) ──────────────────────────
-community = None
+# ── Global state ───────────────────────────────────────────────────────────────
+community       = None
 baseline_medium = None
 
 
 def init_community():
-    """Build the MICOM community. Called once at app startup."""
+    """Build the MICOM community once at app startup."""
     global community, baseline_medium
     tax = pd.DataFrame({
         "id":        list(AGORA_MODELS.keys()),
@@ -61,47 +61,47 @@ def _build_medium(low_mucin: bool, low_b12: bool,
 
 
 def _extract_fluxes(fluxes: pd.DataFrame) -> dict:
-    ids = [EX_ACETATE, EX_BUTYRATE, EX_PROPIONATE, EX_PROPANEDIOL]
-    valid = [r for r in ids if r in fluxes.columns]
+    """Extract net SCFA fluxes from the medium row."""
+    valid = [r for r in METABOLITES if r in fluxes.columns]
     if not valid:
         return {}
-    df = fluxes[valid].copy()
-    net = df.drop(index="medium", errors="ignore").sum(axis=0)
-    return net.to_dict()
+    if "medium" in fluxes.index:
+        # medium row = net flux exchanged with the environment
+        return fluxes.loc["medium", valid].rename(METABOLITES).to_dict()
+    # fallback: sum species rows
+    return fluxes[valid].sum(axis=0).rename(METABOLITES).to_dict()
 
 
-# ── Abundance helpers ─────────────────────────────────────────────────────────
-def _resolve_abundances(user_input: Optional[dict[str, float]]) -> dict[str, float]:
-    """Return a normalised abundance dict for all species.
-
-    Missing species are filled with 0; values are renormalised to sum to 1.
-    Falls back to DEFAULT_ABUNDANCES when user_input is None.
-    """
-    if user_input is None:
-        return DEFAULT_ABUNDANCES.copy()
-
-    raw = {sp: user_input.get(sp, 0.0) for sp in VALID_SPECIES}
-    total = sum(raw.values())
-    return {sp: v / total for sp, v in raw.items()}
+def _apply_abundances(abundances: dict):
+    """Validate and apply custom abundances to the community."""
+    unknown = set(abundances) - set(AGORA_MODELS)
+    if unknown:
+        raise ValueError(f"Unknown species: {unknown}. Valid: {list(AGORA_MODELS.keys())}")
+    total = sum(abundances.values())
+    if not (0.99 <= total <= 1.01):
+        raise ValueError(f"Abundances must sum to 1.0 (got {total:.3f}).")
+    normalised = {k: v / total for k, v in abundances.items()}
+    community.set_abundance(normalised)
 
 
 # ── Main function called by the API ──────────────────────────────────────────
 def run_metabolic_model(
-    abundances: Optional[dict[str, float]] = None,
     low_mucin: bool    = False,
     low_b12: bool      = False,
     mucin_level: float = 0.001,
     b12_level: float   = 0.001,
-    fraction: float    = 0.3,
+    fraction: float    = TRADEOFF,
+    abundances: dict   = None,
 ) -> dict:
     if community is None:
-        raise RuntimeError("Community not initialised. App may not have started correctly.")
+        raise RuntimeError("Community not initialised.")
 
-    resolved = _resolve_abundances(abundances)
-    community.abundances = pd.Series(resolved)
+    if abundances:
+        _apply_abundances(abundances)
+    else:
+        community.set_abundance(DEFAULT_ABUNDANCES)
 
-    med = _build_medium(low_mucin, low_b12, mucin_level, b12_level)
-    community.medium = med
+    community.medium = _build_medium(low_mucin, low_b12, mucin_level, b12_level)
 
     sol = community.cooperative_tradeoff(fraction=fraction, pfba=True, fluxes=True)
 
@@ -114,11 +114,11 @@ def run_metabolic_model(
         "growth_rate":        sol.growth_rate,
         "net_community_flux": net_flux,
         "condition": {
-            "abundances":  resolved,
             "low_mucin":   low_mucin,
             "low_b12":     low_b12,
             "mucin_level": mucin_level,
             "b12_level":   b12_level,
             "fraction":    fraction,
+            "abundances":  abundances or DEFAULT_ABUNDANCES,
         }
     }
