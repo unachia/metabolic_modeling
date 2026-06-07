@@ -1,7 +1,7 @@
 ## **A proof-of-concept metabolic model for the small microbial community**
 
 #### **Goal:**
-*This project aims to explore how gut microbial species interact with each other and visualise microbial dynamics under different biological assumptions, including two modes: (1) a configurable generalized Lotka–Volterra (gLV) model, where users can adjust growth rates and pairwise interaction coefficients and immediately observe the resulting community dynamics; and (2) a mechanistic mode based on AGORA genome-scale metabolic models integrated through MICOM, which simulates cross-feeding, metabolite exchange, and resource competition using constraint-based modeling. Together, these tools provide a flexible, educational, and research-ready environment for demonstrating microbial interactions, nutrient dependencies, and emergent behaviors in gut ecosystems.*
+*This project aims to explore how gut microbial species interact with each other and visualise microbial dynamics under different biological assumptions, including two modes: (1) a configurable generalized Lotka–Volterra (gLV) model, where users can adjust growth rates and pairwise interaction coefficients and immediately observe the resulting community dynamics; and (2) a mechanistic model based on AGORA genome-scale metabolic models integrated through MICOM, which simulates cross-feeding, metabolite exchange, and resource competition using constraint-based modeling. Together, these tools provide a flexible, educational, and research-ready environment for demonstrating microbial interactions, nutrient dependencies, and emergent behaviors in gut ecosystems.*
 #### **Rationale:**
 *Key microbe: Akkermansia muciniphila, a mucin-degrading microbe.*
 
